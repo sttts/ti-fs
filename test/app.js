@@ -300,6 +300,27 @@ describe('ti-fs', function() {
 		});
 	});
 
+	it('#write string', function(done) {
+		var test = 'WRITETEST';
+		var file = createFile('write.txt');
+		file.exists().should.be.true;
+
+		var fd = fs.openSync(file.resolve(), 'w');
+		fs.write(fd, test, function(err, bytes) {
+			should.not.exist(err);
+			bytes.should.equal(test.length);
+			fs.readFileSync(file.resolve(), 'utf8').should.equal(test);
+
+			fs.write(fd, 'foo', 1, 2, function(err, bytes) {
+				should.not.exist(err);
+				bytes.should.equal(2);
+				fs.readFileSync(file.resolve(), 'utf8').should.equal('WRITETESToo');
+				fs.closeSync(fd);
+				return done();
+			});
+		});
+	});
+
 	it('#writeSync', function() {
 		var test = 'WRITETEST';
 		var file = createFile('writeSync.txt');
@@ -640,7 +661,14 @@ describe('ti-fs', function() {
 			fs.appendFile(filepath, Ti.createBuffer({ value: '123456789' }), function(err) {
 				should.not.exist(err);
 				fs.readFileSync(filepath, 'utf8').should.equal('this is my text and then some123456789');
-				return done();
+
+				var freshFilepath = DATA_DIR + 'freshAppendFile.txt';
+				if (fs.existsSync(freshFilepath)) { fs.unlinkSync(freshFilepath); }
+				fs.appendFile(freshFilepath, 'this is my append text', function(err) {
+					should.not.exist(err);
+					fs.readFileSync(freshFilepath, 'utf8').should.equal('this is my append text');
+					return done();
+				});
 			});
 		});
 	});
@@ -653,6 +681,11 @@ describe('ti-fs', function() {
 		fs.readFileSync(filepath, 'utf8').should.equal('this is my text and then some');
 		fs.appendFileSync(filepath, Ti.createBuffer({ value: '123456789' }));
 		fs.readFileSync(filepath, 'utf8').should.equal('this is my text and then some123456789');
+
+		var freshFilepath = DATA_DIR + 'freshAppendFile.txt';
+		if (fs.existsSync(freshFilepath)) { fs.unlinkSync(freshFilepath); }
+		fs.appendFileSync(freshFilepath, 'this is my append text');
+		fs.readFileSync(freshFilepath, 'utf8').should.equal('this is my append text');
 	});
 
 	it('#realpathSync', function() {

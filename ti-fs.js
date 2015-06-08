@@ -27,69 +27,72 @@ if (typeof Object.create === 'function') {
 // shim for using process in browser
 
 var process = module.exports = {};
+var queue = [];
+var draining = false;
+var currentQueue;
+var queueIndex = -1;
 
-process.nextTick = (function () {
-    var canSetImmediate = typeof window !== 'undefined'
-    && window.setImmediate;
-    var canMutationObserver = typeof window !== 'undefined'
-    && window.MutationObserver;
-    var canPost = typeof window !== 'undefined'
-    && window.postMessage && window.addEventListener
-    ;
-
-    if (canSetImmediate) {
-        return function (f) { return window.setImmediate(f) };
+function cleanUpNextTick() {
+    draining = false;
+    if (currentQueue.length) {
+        queue = currentQueue.concat(queue);
+    } else {
+        queueIndex = -1;
     }
-
-    var queue = [];
-
-    if (canMutationObserver) {
-        var hiddenDiv = document.createElement("div");
-        var observer = new MutationObserver(function () {
-            var queueList = queue.slice();
-            queue.length = 0;
-            queueList.forEach(function (fn) {
-                fn();
-            });
-        });
-
-        observer.observe(hiddenDiv, { attributes: true });
-
-        return function nextTick(fn) {
-            if (!queue.length) {
-                hiddenDiv.setAttribute('yes', 'no');
-            }
-            queue.push(fn);
-        };
+    if (queue.length) {
+        drainQueue();
     }
+}
 
-    if (canPost) {
-        window.addEventListener('message', function (ev) {
-            var source = ev.source;
-            if ((source === window || source === null) && ev.data === 'process-tick') {
-                ev.stopPropagation();
-                if (queue.length > 0) {
-                    var fn = queue.shift();
-                    fn();
-                }
-            }
-        }, true);
-
-        return function nextTick(fn) {
-            queue.push(fn);
-            window.postMessage('process-tick', '*');
-        };
+function drainQueue() {
+    if (draining) {
+        return;
     }
+    var timeout = setTimeout(cleanUpNextTick);
+    draining = true;
 
-    return function nextTick(fn) {
-        setTimeout(fn, 0);
-    };
-})();
+    var len = queue.length;
+    while(len) {
+        currentQueue = queue;
+        queue = [];
+        while (++queueIndex < len) {
+            currentQueue[queueIndex].run();
+        }
+        queueIndex = -1;
+        len = queue.length;
+    }
+    currentQueue = null;
+    draining = false;
+    clearTimeout(timeout);
+}
 
+process.nextTick = function (fun) {
+    var args = new Array(arguments.length - 1);
+    if (arguments.length > 1) {
+        for (var i = 1; i < arguments.length; i++) {
+            args[i - 1] = arguments[i];
+        }
+    }
+    queue.push(new Item(fun, args));
+    if (queue.length === 1 && !draining) {
+        setTimeout(drainQueue, 0);
+    }
+};
+
+// v8 likes predictible objects
+function Item(fun, array) {
+    this.fun = fun;
+    this.array = array;
+}
+Item.prototype.run = function () {
+    this.fun.apply(null, this.array);
+};
 process.title = 'browser';
 process.browser = true;
 process.env = {};
 process.argv = [];
+process.version = ''; // empty string to avoid regexp issues
+process.versions = {};
 
 function noop() {}
 
@@ -110,6 +113,7 @@ process.cwd = function () { return '/' };
 process.chdir = function (dir) {
     throw new Error('process.chdir is not supported');
 };
+process.umask = function() { return 0; };
 
 },{}],3:[function(require,module,exports){
 module.exports = function isBuffer(arg) {
@@ -838,6 +842,7 @@ fs.readFileSync = function readFileSync(path, options) {
 };
 
 fs.close = function close(fd, callback) {
+	callback = maybeCallback(arguments[arguments.length-1]);
 	setTimeout(function() {
 		var err = null;
 		try {
@@ -873,8 +878,13 @@ fs.open = function open(path, flags, mode, callback) {
 
 fs.openSync = function openSync(path, flags, mode) {
 	var tiMode = assertFlags(flags),
-		file = $F.getFile(path),
-		fd = file.open(tiMode);
+		file = $F.getFile(path);
+
+	if (tiMode === $F.MODE_APPEND && !fs.existsSync(path)) {
+		file.open($F.MODE_WRITE).close();
+	}
+
+	var fd = file.open(tiMode);
 	fd.__path = path;
 	return fd;
 };
@@ -915,7 +925,7 @@ if (IS_ANDROID) {
 	};
 }
 
-fs.write = function write(fd, buffer, offset, length, position, callback) {
+fs.write = function write(fd, data, offset, length, position, callback) {
 	// position is not handled in Titanium streams
 	callback = maybeCallback(arguments[arguments.length-1]);
 	if (util.isFunction(position)) { position = undefined; }
@@ -928,26 +938,26 @@ fs.write = function write(fd, buffer, offset, length, position, callback) {
 		var bytes = null,
 			err = null;
 		try {
-			bytes = fs.writeSync(fd, buffer, offset, length, position);
+			bytes = fs.writeSync(fd, data, offset, length, position);
 		} catch (e) {
 			err = e;
 		}
-		return callback(err, bytes, buffer);
+		return callback(err, bytes, data);
 	}, 0);
 };
 
 // Android improperly handles undefined args passed to offset and/or length
 if (IS_ANDROID) {
-	fs.writeSync = function writeSync(fd, buffer, offset, length, position) {
+	fs.writeSync = function writeSync(fd, data, offset, length, position) {
 		if (offset == null && length == null) {
-			return fd.write(buffer);
+			return fd.write(getBuffer(data));
 		} else {
-			return fd.write(buffer, offset, length);
+			return fd.write(getBuffer(data), offset, length);
 		}
 	};
 } else {
-	fs.writeSync = function writeSync(fd, buffer, offset, length, position) {
-		return fd.write(buffer, offset, length);
+	fs.writeSync = function writeSync(fd, data, offset, length, position) {
+		return fd.write(getBuffer(data), offset, length);
 	};
 }
 
@@ -957,7 +967,6 @@ fs.rename = function rename(oldPath, newPath, callback) {
 			good = false;
 		try {
 			good = $F.getFile(oldPath).move(newPath);
-			console.log('good: ' + good);
 			if (!good) {
 				err = new Error('could not move file');
 			}
@@ -1259,11 +1268,8 @@ fs.writeFileSync = function writeFileSync(path, data, options) {
 		fd = fs.openSync(path, 'w'),
 		buffer;
 
-	if (data.apiName === 'Ti.Buffer') {
-		buffer = data;
-	} else {
-		buffer = Ti.createBuffer({value:data});
-	}
+	buffer = getBuffer(data);
+
 	fs.writeSync(fd, buffer);
 	fs.closeSync(fd);
 };
@@ -1291,11 +1297,8 @@ fs.appendFileSync = function appendFileSync(path, data, options) {
 		fd = fs.openSync(path, 'a'),
 		buffer;
 
-	if (data.apiName === 'Ti.Buffer') {
-		buffer = data;
-	} else {
-		buffer = Ti.createBuffer({value:data});
-	}
+	buffer = getBuffer(data);
+
 	fs.writeSync(fd, buffer);
 	fs.closeSync(fd);
 };
@@ -1465,6 +1468,14 @@ function assertFlags(flags) {
 		throw new Error('Unknown file open flag: ' + flags);
 	}
 	return tiMode;
+}
+
+function getBuffer(data) {
+	if (data.apiName === 'Ti.Buffer') {
+		return data;
+	} else {
+		return Ti.createBuffer({value:data});
+	}
 }
 
 var ENCODINGS = ['ascii','utf8','utf-8','base64','binary'];
