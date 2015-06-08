@@ -29,32 +29,64 @@ if (typeof Object.create === 'function') {
 var process = module.exports = {};
 var queue = [];
 var draining = false;
+var currentQueue;
+var queueIndex = -1;
+
+function cleanUpNextTick() {
+    draining = false;
+    if (currentQueue.length) {
+        queue = currentQueue.concat(queue);
+    } else {
+        queueIndex = -1;
+    }
+    if (queue.length) {
+        drainQueue();
+    }
+}
 
 function drainQueue() {
     if (draining) {
         return;
     }
+    var timeout = setTimeout(cleanUpNextTick);
     draining = true;
-    var currentQueue;
+
     var len = queue.length;
     while(len) {
         currentQueue = queue;
         queue = [];
-        var i = -1;
-        while (++i < len) {
-            currentQueue[i]();
+        while (++queueIndex < len) {
+            currentQueue[queueIndex].run();
         }
+        queueIndex = -1;
         len = queue.length;
     }
+    currentQueue = null;
     draining = false;
+    clearTimeout(timeout);
 }
+
 process.nextTick = function (fun) {
-    queue.push(fun);
-    if (!draining) {
+    var args = new Array(arguments.length - 1);
+    if (arguments.length > 1) {
+        for (var i = 1; i < arguments.length; i++) {
+            args[i - 1] = arguments[i];
+        }
+    }
+    queue.push(new Item(fun, args));
+    if (queue.length === 1 && !draining) {
         setTimeout(drainQueue, 0);
     }
 };
 
+// v8 likes predictible objects
+function Item(fun, array) {
+    this.fun = fun;
+    this.array = array;
+}
+Item.prototype.run = function () {
+    this.fun.apply(null, this.array);
+};
 process.title = 'browser';
 process.browser = true;
 process.env = {};
@@ -892,7 +924,7 @@ if (IS_ANDROID) {
 	};
 }
 
-fs.write = function write(fd, buffer, offset, length, position, callback) {
+fs.write = function write(fd, data, offset, length, position, callback) {
 	// position is not handled in Titanium streams
 	callback = maybeCallback(arguments[arguments.length-1]);
 	if (util.isFunction(position)) { position = undefined; }
@@ -905,26 +937,26 @@ fs.write = function write(fd, buffer, offset, length, position, callback) {
 		var bytes = null,
 			err = null;
 		try {
-			bytes = fs.writeSync(fd, buffer, offset, length, position);
+			bytes = fs.writeSync(fd, data, offset, length, position);
 		} catch (e) {
 			err = e;
 		}
-		return callback(err, bytes, buffer);
+		return callback(err, bytes, data);
 	}, 0);
 };
 
 // Android improperly handles undefined args passed to offset and/or length
 if (IS_ANDROID) {
-	fs.writeSync = function writeSync(fd, buffer, offset, length, position) {
+	fs.writeSync = function writeSync(fd, data, offset, length, position) {
 		if (offset == null && length == null) {
-			return fd.write(buffer);
+			return fd.write(getBuffer(data));
 		} else {
-			return fd.write(buffer, offset, length);
+			return fd.write(getBuffer(data), offset, length);
 		}
 	};
 } else {
-	fs.writeSync = function writeSync(fd, buffer, offset, length, position) {
-		return fd.write(buffer, offset, length);
+	fs.writeSync = function writeSync(fd, data, offset, length, position) {
+		return fd.write(getBuffer(data), offset, length);
 	};
 }
 
@@ -1235,11 +1267,8 @@ fs.writeFileSync = function writeFileSync(path, data, options) {
 		fd = fs.openSync(path, 'w'),
 		buffer;
 
-	if (data.apiName === 'Ti.Buffer') {
-		buffer = data;
-	} else {
-		buffer = Ti.createBuffer({value:data});
-	}
+	buffer = getBuffer(data);
+
 	fs.writeSync(fd, buffer);
 	fs.closeSync(fd);
 };
@@ -1267,11 +1296,8 @@ fs.appendFileSync = function appendFileSync(path, data, options) {
 		fd = fs.openSync(path, 'a'),
 		buffer;
 
-	if (data.apiName === 'Ti.Buffer') {
-		buffer = data;
-	} else {
-		buffer = Ti.createBuffer({value:data});
-	}
+	buffer = getBuffer(data);
+
 	fs.writeSync(fd, buffer);
 	fs.closeSync(fd);
 };
@@ -1441,6 +1467,14 @@ function assertFlags(flags) {
 		throw new Error('Unknown file open flag: ' + flags);
 	}
 	return tiMode;
+}
+
+function getBuffer(data) {
+	if (data.apiName === 'Ti.Buffer') {
+		return data;
+	} else {
+		return Ti.createBuffer({value:data});
+	}
 }
 
 var ENCODINGS = ['ascii','utf8','utf-8','base64','binary'];
