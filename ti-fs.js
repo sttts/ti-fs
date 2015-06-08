@@ -842,6 +842,7 @@ fs.readFileSync = function readFileSync(path, options) {
 };
 
 fs.close = function close(fd, callback) {
+	callback = maybeCallback(arguments[arguments.length-1]);
 	setTimeout(function() {
 		var err = null;
 		try {
