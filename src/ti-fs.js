@@ -209,7 +209,7 @@ if (IS_ANDROID) {
 	};
 }
 
-fs.write = function write(fd, buffer, offset, length, position, callback) {
+fs.write = function write(fd, data, offset, length, position, callback) {
 	// position is not handled in Titanium streams
 	callback = maybeCallback(arguments[arguments.length-1]);
 	if (util.isFunction(position)) { position = undefined; }
@@ -222,26 +222,26 @@ fs.write = function write(fd, buffer, offset, length, position, callback) {
 		var bytes = null,
 			err = null;
 		try {
-			bytes = fs.writeSync(fd, buffer, offset, length, position);
+			bytes = fs.writeSync(fd, data, offset, length, position);
 		} catch (e) {
 			err = e;
 		}
-		return callback(err, bytes, buffer);
+		return callback(err, bytes, data);
 	}, 0);
 };
 
 // Android improperly handles undefined args passed to offset and/or length
 if (IS_ANDROID) {
-	fs.writeSync = function writeSync(fd, buffer, offset, length, position) {
+	fs.writeSync = function writeSync(fd, data, offset, length, position) {
 		if (offset == null && length == null) {
-			return fd.write(buffer);
+			return fd.write(getBuffer(data));
 		} else {
-			return fd.write(buffer, offset, length);
+			return fd.write(getBuffer(data), offset, length);
 		}
 	};
 } else {
-	fs.writeSync = function writeSync(fd, buffer, offset, length, position) {
-		return fd.write(buffer, offset, length);
+	fs.writeSync = function writeSync(fd, data, offset, length, position) {
+		return fd.write(getBuffer(data), offset, length);
 	};
 }
 
@@ -552,11 +552,8 @@ fs.writeFileSync = function writeFileSync(path, data, options) {
 		fd = fs.openSync(path, 'w'),
 		buffer;
 
-	if (data.apiName === 'Ti.Buffer') {
-		buffer = data;
-	} else {
-		buffer = Ti.createBuffer({value:data});
-	}
+	buffer = getBuffer(data);
+
 	fs.writeSync(fd, buffer);
 	fs.closeSync(fd);
 };
@@ -584,11 +581,8 @@ fs.appendFileSync = function appendFileSync(path, data, options) {
 		fd = fs.openSync(path, 'a'),
 		buffer;
 
-	if (data.apiName === 'Ti.Buffer') {
-		buffer = data;
-	} else {
-		buffer = Ti.createBuffer({value:data});
-	}
+	buffer = getBuffer(data);
+
 	fs.writeSync(fd, buffer);
 	fs.closeSync(fd);
 };
@@ -758,6 +752,14 @@ function assertFlags(flags) {
 		throw new Error('Unknown file open flag: ' + flags);
 	}
 	return tiMode;
+}
+
+function getBuffer(data) {
+	if (data.apiName === 'Ti.Buffer') {
+		return data;
+	} else {
+		return Ti.createBuffer({value:data});
+	}
 }
 
 var ENCODINGS = ['ascii','utf8','utf-8','base64','binary'];

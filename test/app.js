@@ -300,6 +300,27 @@ describe('ti-fs', function() {
 		});
 	});
 
+	it('#write string', function(done) {
+		var test = 'WRITETEST';
+		var file = createFile('write.txt');
+		file.exists().should.be.true;
+
+		var fd = fs.openSync(file.resolve(), 'w');
+		fs.write(fd, test, function(err, bytes) {
+			should.not.exist(err);
+			bytes.should.equal(test.length);
+			fs.readFileSync(file.resolve(), 'utf8').should.equal(test);
+
+			fs.write(fd, 'foo', 1, 2, function(err, bytes) {
+				should.not.exist(err);
+				bytes.should.equal(2);
+				fs.readFileSync(file.resolve(), 'utf8').should.equal('WRITETESToo');
+				fs.closeSync(fd);
+				return done();
+			});
+		});
+	});
+
 	it('#writeSync', function() {
 		var test = 'WRITETEST';
 		var file = createFile('writeSync.txt');
